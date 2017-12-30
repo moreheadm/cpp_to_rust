@@ -76,18 +76,24 @@ fn operator_rust_name(operator: &CppOperator) -> Result<String> {
      })
 }
 
-/// If `remove_qt_prefix` is true, removes "Q" or "Qt"
+/// Removes a prefix in prefixes_to_remove from the string
 /// if it is first word of the string and not the only one word.
 /// Also converts case of the words.
 #[cfg_attr(feature="clippy", allow(collapsible_if))]
-fn remove_qt_prefix_and_convert_case(s: &str, case: Case, remove_qt_prefix: bool) -> String {
+fn remove_prefix_and_convert_case<T: IntoIterator<Item = String>>(s: &str, case: Case,
+                                                              prefixes_to_remove: T) -> String {
+  
   let mut parts: Vec<_> = WordIterator::new(s).collect();
-  if remove_qt_prefix && parts.len() > 1 {
-    if (parts[0] == "Q" || parts[0] == "q" || parts[0] == "Qt") &&
-       !parts[1].starts_with(|c: char| c.is_digit(10)) {
-      parts.remove(0);
+  
+  if parts.len() > 1 && !parts[1].starts_with(|c: char| c.is_digit(10)) {
+    for prefix in prefixes_to_remove {
+      if parts[0] == prefix {
+        parts.remove(0);
+        break;
+      }
     }
   }
+  
   match case {
     Case::Snake => parts.to_snake_case(),
     Case::Class => parts.to_class_case(),
@@ -95,13 +101,14 @@ fn remove_qt_prefix_and_convert_case(s: &str, case: Case, remove_qt_prefix: bool
 }
 
 /// Removes ".h" from include file name and performs the same
-/// processing as `remove_qt_prefix_and_convert_case()` for snake case.
-fn include_file_to_module_name(include_file: &str, remove_qt_prefix: bool) -> String {
+/// processing as `remove_prefix_and_convert_case()` for snake case.
+fn include_file_to_module_name<T: IntoIterator<Item = String>>(include_file: &str,
+                                                           prefixes_to_remove: T) -> String {
   let mut r = include_file.to_string();
   if let Some(index) = r.find('.') {
     r = r[0..index].to_string();
   }
-  remove_qt_prefix_and_convert_case(&r, Case::Snake, remove_qt_prefix)
+  remove_prefix_and_convert_case(&r, Case::Snake, prefixes_to_remove)
 }
 
 /// Adds "_" to a string if it is a reserved word in Rust
@@ -236,8 +243,6 @@ pub struct RustGeneratorOutput {
   pub processed_types: Vec<RustProcessedTypeInfo>,
 }
 
-// TODO: implement removal of arbitrary prefixes (#25)
-
 /// Information required by Rust generator
 pub struct RustGeneratorInputData<'a> {
   /// Processed C++ data
@@ -250,7 +255,7 @@ pub struct RustGeneratorInputData<'a> {
   pub crate_name: String,
   /// Flag instructing to remove leading "Q" and "Qt"
   /// from identifiers.
-  pub remove_qt_prefix: bool,
+  pub prefixes_to_remove: Vec<String>, // TODO: str or String, update docs
   /// List of namespaces to filter out during code generation
   pub filtered_namespaces: Vec<String>,
 }
@@ -660,7 +665,8 @@ impl<'aa> RustGenerator<'aa> {
         if !result.contains_key(header) {
           let mut parts = Vec::new();
           parts.push(self.input_data.crate_name.clone());
-          parts.push(include_file_to_module_name(header, self.input_data.remove_qt_prefix));
+          parts.push(include_file_to_module_name(header,
+                                                 self.input_data.prefixes_to_remove.clone()));
           result.insert(header.to_string(), RustName::new(parts)?);
         }
         Ok(())
@@ -1989,13 +1995,13 @@ impl<'aa> RustGenerator<'aa> {
     let last_part = if let Some(operator) = operator {
       operator_rust_name(operator)?
     } else {
-      remove_qt_prefix_and_convert_case(&original_last_part,
+      remove_prefix_and_convert_case(&original_last_part,
                                         if is_function {
                                           Case::Snake
                                         } else {
                                           Case::Class
                                         },
-                                        self.input_data.remove_qt_prefix)
+                                        self.input_data.prefixes_to_remove.clone())
     };
 
     let module_name =
@@ -2009,15 +2015,15 @@ impl<'aa> RustGenerator<'aa> {
       parts.push("raw".to_string());
     }
     //    parts.push(config.crate_name.clone());
-    //    parts.push(include_file_to_module_name(include_file, config.remove_qt_prefix));
+    //    parts.push(include_file_to_module_name(include_file, config.prefixes_to_remove));
     for part in split_parts {
       let part = part.to_string();
       if self.input_data.filtered_namespaces.contains(&part) {
         continue;
       }
-      parts.push(remove_qt_prefix_and_convert_case(&part,
-                                                   Case::Snake,
-                                                   self.input_data.remove_qt_prefix));
+      parts.push(remove_prefix_and_convert_case(&part,
+                                                Case::Snake,
+                                                self.input_data.prefixes_to_remove.clone()));
     }
 
     if parts.len() > 2 && parts[1] == parts[2] {
@@ -2029,33 +2035,44 @@ impl<'aa> RustGenerator<'aa> {
   }
 }
 
-
+// TODO: rename this
 // ---------------------------------
 #[test]
-fn remove_qt_prefix_and_convert_case_test() {
-  assert_eq!(remove_qt_prefix_and_convert_case(&"OneTwo".to_string(), Case::Class, false),
+fn remove_prefix_and_convert_case_test() {
+  let empty: Vec<String> = vec![];
+  let qt_prefixes: Vec<String> = vec![String::from("q"), String::from("Q"), String::from("Qt")];
+
+  assert_eq!(remove_prefix_and_convert_case(&"OneTwo".to_string(), Case::Class, empty.clone()),
              "OneTwo");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"OneTwo".to_string(), Case::Snake, false),
+  assert_eq!(remove_prefix_and_convert_case(&"OneTwo".to_string(), Case::Snake, empty.clone()),
              "one_two");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"OneTwo".to_string(), Case::Class, true),
+  assert_eq!(remove_prefix_and_convert_case(&"OneTwo".to_string(),
+                                            Case::Class, qt_prefixes.clone()),
              "OneTwo");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"OneTwo".to_string(), Case::Snake, true),
+  assert_eq!(remove_prefix_and_convert_case(&"OneTwo".to_string(),
+                                            Case::Snake, qt_prefixes.clone()),
              "one_two");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"QDirIterator".to_string(), Case::Class, false),
+  assert_eq!(remove_prefix_and_convert_case(&"QDirIterator".to_string(),
+                                            Case::Class, empty.clone()),
              "QDirIterator");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"QDirIterator".to_string(), Case::Snake, false),
+  assert_eq!(remove_prefix_and_convert_case(&"QDirIterator".to_string(),
+                                            Case::Snake, empty.clone()),
              "q_dir_iterator");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"QDirIterator".to_string(), Case::Class, true),
+  assert_eq!(remove_prefix_and_convert_case(&"QDirIterator".to_string(),
+                                            Case::Class, qt_prefixes.clone()),
              "DirIterator");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"QDirIterator".to_string(), Case::Snake, true),
+  assert_eq!(remove_prefix_and_convert_case(&"QDirIterator".to_string(),
+                                            Case::Snake, qt_prefixes.clone()),
              "dir_iterator");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"Qt3DWindow".to_string(), Case::Class, false),
+  assert_eq!(remove_prefix_and_convert_case(&"Qt3DWindow".to_string(), Case::Class, empty.clone()),
              "Qt3DWindow");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"Qt3DWindow".to_string(), Case::Snake, false),
+  assert_eq!(remove_prefix_and_convert_case(&"Qt3DWindow".to_string(), Case::Snake, empty.clone()),
              "qt_3d_window");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"Qt3DWindow".to_string(), Case::Class, true),
+  assert_eq!(remove_prefix_and_convert_case(&"Qt3DWindow".to_string(),
+                                            Case::Class, qt_prefixes.clone()),
              "Qt3DWindow");
-  assert_eq!(remove_qt_prefix_and_convert_case(&"Qt3DWindow".to_string(), Case::Snake, true),
+  assert_eq!(remove_prefix_and_convert_case(&"Qt3DWindow".to_string(),
+                                            Case::Snake, qt_prefixes.clone()),
              "qt_3d_window");
 }
 
@@ -2064,6 +2081,9 @@ fn calculate_rust_name_test_part(name: &'static str,
                                  include_file: &'static str,
                                  is_function: bool,
                                  expected: &[&'static str]) {
+
+  let qt_prefixes: Vec<String> = vec![String::from("q"), String::from("Q"), String::from("Qt")];
+
   let header = ::cpp_ffi_data::CppFfiHeaderData {
     include_file_base_name: include_file.to_string(),
     methods: Vec::new(),
@@ -2077,7 +2097,7 @@ fn calculate_rust_name_test_part(name: &'static str,
       cpp_data: &Default::default(),
       dependency_types: Vec::new(),
       crate_name: "qt_core".to_string(),
-      remove_qt_prefix: true,
+      prefixes_to_remove: qt_prefixes,
       filtered_namespaces: Vec::new(),
     },
   };

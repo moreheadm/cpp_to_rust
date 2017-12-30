@@ -297,9 +297,6 @@ pub fn exec<T: Iterator<Item = Config>>(configs: T) -> Result<()> {
       logger.set_all_category_settings(category_settings);
     }
 
-    // TODO: allow to remove any prefix through `Config` (#25)
-    let remove_qt_prefix = config.crate_properties().name().starts_with("qt_");
-
     if !config.dependency_cache_paths().is_empty() {
       log::status("Loading dependencies");
     }
@@ -378,8 +375,7 @@ pub fn exec<T: Iterator<Item = Config>>(configs: T) -> Result<()> {
             .map(|dep| &dep.rust_export_info.rust_types as &[_])
             .collect(),
           crate_name: config.crate_properties().name().clone(),
-          // TODO: more universal prefix removal (#25)
-          remove_qt_prefix: remove_qt_prefix,
+          prefixes_to_remove: config.prefixes_to_remove().clone(),
           filtered_namespaces: config.cpp_filtered_namespaces().clone(),
         }
         .run()

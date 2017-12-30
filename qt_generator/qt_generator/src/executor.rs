@@ -243,6 +243,9 @@ fn make_config(sublib_name: &str,
     }
     Ok(())
   });
+  
+  let qt_prefixes = vec![String::from("q"), String::from("Q"), String::from("Qt")];
+  config.add_prefixes_to_remove(qt_prefixes); 
 
   config.set_crate_template_path(crate_templates_path);
   match sublib_name {
